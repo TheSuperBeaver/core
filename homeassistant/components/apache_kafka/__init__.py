@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import logging
 from typing import Any, Literal
 
 from aiokafka import AIOKafkaProducer
@@ -18,6 +19,7 @@ from homeassistant.const import (
     CONF_OAUTH_CLIENT_SECRET,
     CONF_PASSWORD,
     CONF_PORT,
+    CONF_SASL_MECHANISM,
     CONF_USERNAME,
     EVENT_HOMEASSISTANT_STOP,
     EVENT_STATE_CHANGED,
@@ -27,6 +29,8 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entityfilter import FILTER_SCHEMA, EntityFilter
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import ssl as ssl_util
+
+log = logging.getLogger("apache_kafka")
 
 DOMAIN = "apache_kafka"
 
@@ -44,6 +48,9 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_FILTER, default={}): FILTER_SCHEMA,
                 vol.Optional(CONF_SECURITY_PROTOCOL, default="PLAINTEXT"): vol.In(
                     ["PLAINTEXT", "SASL_SSL"]
+                ),
+                vol.Optional(CONF_SASL_MECHANISM, default="PLAIN"): vol.In(
+                    ["PLAIN", "OAUTHBEARER"]
                 ),
                 vol.Optional(CONF_USERNAME): cv.string,
                 vol.Optional(CONF_PASSWORD): cv.string,
@@ -68,6 +75,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         conf[CONF_TOPIC],
         conf[CONF_FILTER],
         conf[CONF_SECURITY_PROTOCOL],
+        conf[CONF_SASL_MECHANISM],
         conf.get(CONF_USERNAME),
         conf.get(CONF_PASSWORD),
         conf.get(CONF_OAUTH_CLIENT_ID),
@@ -124,6 +132,7 @@ class KafkaManager:
         topic: str,
         entities_filter: EntityFilter,
         security_protocol: Literal["PLAINTEXT", "SASL_SSL"],
+        sasl_mechanism: Literal["PLAIN", "OAUTHBEARER"],
         username: str | None,
         password: str | None,
         client_id: str,
@@ -140,7 +149,7 @@ class KafkaManager:
             compression_type="gzip",
             security_protocol=security_protocol,
             ssl_context=ssl_context,
-            sasl_mechanism="PLAIN",
+            sasl_mechanism=sasl_mechanism,
             sasl_plain_username=username,
             sasl_plain_password=password,
             sasl_oauth_token_provider=SaslOauthTokenProvider(
