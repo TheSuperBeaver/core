@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+from functools import partial
 import json
 import logging
 from typing import Any, Literal
@@ -102,9 +104,23 @@ class SaslOauthTokenProvider(AbstractTokenProvider):  # type: ignore[misc]
 
     async def token(self) -> tuple[str, str]:
         """Create a bearer token."""
-        token = self._session.fetch_token(
-            self.oauth_auth_url, grant_type="client_credentials"
+        loop = asyncio.get_running_loop()
+
+        # Use run_in_executor to run the blocking call in a separate thread
+        blocking_fetch_token = partial(
+            self._session.fetch_token,
+            self.oauth_auth_url,
+            grant_type="client_credentials",
         )
+
+        log.info("Going to fetch the token")
+
+        # Fetch the token without blocking the event loop
+        token = await loop.run_in_executor(None, blocking_fetch_token)
+
+        log.info("Token retrieved %s", token["access_token"])
+
+        # Return the access token and expiry time
         return token["access_token"], token["expires_at"]
 
 
