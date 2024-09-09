@@ -7,10 +7,15 @@ import json
 from typing import Any, Literal
 
 from aiokafka import AIOKafkaProducer
+from aiokafka.abc import AbstractTokenProvider
+from authlib.integrations.requests_client import OAuth2Session
 import voluptuous as vol
 
 from homeassistant.const import (
     CONF_IP_ADDRESS,
+    CONF_OAUTH_AUTH_URL,
+    CONF_OAUTH_CLIENT_ID,
+    CONF_OAUTH_CLIENT_SECRET,
     CONF_PASSWORD,
     CONF_PORT,
     CONF_USERNAME,
@@ -42,6 +47,9 @@ CONFIG_SCHEMA = vol.Schema(
                 ),
                 vol.Optional(CONF_USERNAME): cv.string,
                 vol.Optional(CONF_PASSWORD): cv.string,
+                vol.Optional(CONF_OAUTH_CLIENT_ID): cv.string,
+                vol.Optional(CONF_OAUTH_CLIENT_SECRET): cv.string,
+                vol.Optional(CONF_OAUTH_AUTH_URL): cv.string,
             }
         )
     },
@@ -62,6 +70,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         conf[CONF_SECURITY_PROTOCOL],
         conf.get(CONF_USERNAME),
         conf.get(CONF_PASSWORD),
+        conf.get(CONF_OAUTH_CLIENT_ID),
+        conf.get(CONF_OAUTH_CLIENT_SECRET),
+        conf.get(CONF_OAUTH_AUTH_URL),
     )
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, kafka.shutdown)
@@ -69,6 +80,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await kafka.start()
 
     return True
+
+
+class SaslOauthTokenProvider(AbstractTokenProvider):  # type: ignore[misc]
+    """A token provider for sasl_oauth."""
+
+    def __init__(self, client_id: str, client_secret: str, oauth_auth_url: str) -> None:
+        """Initialize."""
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.oauth_auth_url = oauth_auth_url
+        self._session = OAuth2Session(client_id, client_secret)
+
+    async def token(self) -> tuple[str, str]:
+        """Create a bearer token."""
+        token = self._session.fetch_token(
+            self.oauth_auth_url, grant_type="client_credentials"
+        )
+        return token["access_token"], token["expires_at"]
 
 
 class DateTimeJSONEncoder(json.JSONEncoder):
@@ -97,6 +126,9 @@ class KafkaManager:
         security_protocol: Literal["PLAINTEXT", "SASL_SSL"],
         username: str | None,
         password: str | None,
+        client_id: str,
+        client_secret: str,
+        oauth_auth_url: str,
     ) -> None:
         """Initialize."""
         self._encoder = DateTimeJSONEncoder()
@@ -111,6 +143,9 @@ class KafkaManager:
             sasl_mechanism="PLAIN",
             sasl_plain_username=username,
             sasl_plain_password=password,
+            sasl_oauth_token_provider=SaslOauthTokenProvider(
+                client_id, client_secret, oauth_auth_url
+            ),
         )
         self._topic = topic
 
